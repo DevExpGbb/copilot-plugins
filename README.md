@@ -2,18 +2,15 @@
 
 GitHub Copilot CLI plugins published by the Software/DevEx GBB team.
 
-## Available Plugins
+## 🔌 Available Plugins
 
-| Plugin | Description |
-|--------|-------------|
-| [deploy-devlake](plugins/deploy-devlake/skills/deploy-devlake/) | Deploy Apache DevLake to Azure or run locally with Docker |
+### devlake-deploy
 
-## Installation
+Deploy [Apache DevLake](https://devlake.apache.org/) to Azure or run locally with Docker.
 
-```bash
-copilot plugin install DevExpGBB/copilot-plugins:plugins/<plugin-name>
-```
+Contributions welcome! Please read our contributing guidelines before submitting PRs.
 
-## Contributing
+## 📄 License
 
-Team members can add new plugins by creating a new directory under `plugins/`.
+MIT License - see [LICENSE](LICENSE) for details.
+
