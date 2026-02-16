@@ -1,29 +1,76 @@
 ---
 name: deploy-devlake
-description: Deploy Apache DevLake to Azure or run locally with Docker. Supports Official release images or Custom builds from source. Use when deploying DevLake, creating Azure resources for DevLake, setting up local DevLake, or troubleshooting DevLake deployments. Trigger phrases include "deploy devlake", "set up devlake", "devlake azure", "devlake local", "install devlake".
+description: Deploy and configure Apache DevLake. Supports deployment to Azure or local Docker, plus post-deploy configuration of GitHub connections, Copilot metrics, DORA scopes, and projects. Trigger phrases include "deploy devlake", "set up devlake", "configure devlake", "devlake connections", "devlake scopes", "devlake azure", "devlake local", "install devlake".
 ---
 
-# Deploy DevLake
+# Deploy & Configure DevLake
 
-Deploy Apache DevLake with two paths: **Official** (local or Azure) or **Custom** (build from source → local or Azure).
+Full lifecycle setup for Apache DevLake: deploy, configure connections, add scopes, create a project, and trigger the first data sync.
 
-## Deployment Paths
+## First Interaction — Explain Phases
+
+When a user invokes this skill for the first time, **always start by explaining the three phases** before doing anything else:
+
+> DevLake setup has three phases:
+>
+> **Phase 1 — Deploy:** Spin up a DevLake instance (local Docker or Azure). If you already have DevLake running, you can skip this.
+>
+> **Phase 2 — Configure Connections:** Create GitHub and GitHub Copilot connections so DevLake can pull your data.
+>
+> **Phase 3 — Configure Scopes & Project:** Select which repos to track, set up DORA metric patterns, create a project, and trigger the first data sync.
+>
+> You can run these individually or combined:
+> - **Full Setup** = Phases 1 + 2 + 3 (deploy and configure everything from scratch)
+> - **Full Configuration** = Phases 2 + 3 (configure a DevLake instance that's already running)
+
+Then ask:
+> "Would you like to:
+> 1. **Full Setup** — Deploy DevLake and configure it end-to-end (Phases 1→2→3)
+> 2. **Full Configuration** — Configure an already-running DevLake instance (Phases 2→3)
+> 3. **Deploy only** — Just deploy DevLake (Phase 1)
+> 4. **Configure connections only** — Phase 2
+> 5. **Configure scopes only** — Phase 3"
+
+Branch to the appropriate section based on their answer. If the user's original message already makes their intent clear (e.g., "deploy devlake to Azure"), skip the question and go directly to the relevant phase.
+
+## Setup Phases
 
 ```
 ═══════════════════════════════════════════════════════════════
-              DEVLAKE DEPLOYMENT - SELECT PATH
+              DEVLAKE SETUP - SELECT PHASE
 ═══════════════════════════════════════════════════════════════
-1️⃣  Official Apache DevLake (latest release, official images)
-    a) Local Docker - quick setup on your machine
-    b) Deploy to Azure - ACI containers with managed MySQL
 
-2️⃣  Custom DevLake (build from source)
-    Step 1: Choose source
-      a) Clone a remote fork (e.g., ewega/incubator-devlake)
-      b) Use a local repository path
-    Step 2: Choose target
-      1) Local Docker - build & run locally
-      2) Deploy to Azure - push to ACR, deploy to ACI
+  PHASE 1 — Deploy DevLake
+  ────────────────────────
+  1️⃣  Official Apache DevLake (latest release images)
+      a) Local Docker
+      b) Deploy to Azure
+
+  2️⃣  Custom DevLake (build from source)
+      a) Clone fork → Local Docker
+      b) Clone fork → Deploy to Azure
+
+  PHASE 2 — Configure Connections
+  ────────────────────────────────
+  3️⃣  Create GitHub + Copilot connections
+      • Validates PAT scopes via gh CLI
+      • Tests connections before saving
+
+  PHASE 3 — Configure Scopes & Project
+  ─────────────────────────────────────
+  4️⃣  Add repos, create DORA config, build project
+      • Browse/select repos via gh CLI
+      • Create DORA scope config (deploy/prod patterns)
+      • Create project + blueprint
+      • Trigger first data sync
+
+  FULL CONFIGURATION — Phases 2 + 3 combined
+  ─────────────────────────────────────────────
+  5️⃣  End-to-end post-deployment configuration in one flow
+
+  FULL SETUP — Phases 1 + 2 + 3
+  ──────────────────────────────
+  6️⃣  Deploy + configure everything from scratch
 
 ☁️  Cloud support: Azure only (AWS/GCP coming soon)
 ═══════════════════════════════════════════════════════════════
@@ -31,10 +78,12 @@ Deploy Apache DevLake with two paths: **Official** (local or Azure) or **Custom*
 
 ## Prerequisites
 
-| Deployment | Requirements |
-|------------|--------------|
-| Local Docker | Docker installed and running |
-| Azure | Azure CLI logged in (`az account show`), Docker, Active subscription |
+| Phase | Requirements |
+|-------|--------------|
+| Phase 1 — Local Docker | Docker installed and running |
+| Phase 1 — Azure | Azure CLI logged in (`az account show`), Docker, Active subscription |
+| Phase 2 — Connections | Running DevLake instance, `gh` CLI authenticated (`gh auth status`), GitHub PAT with scopes: `repo`, `read:org`, `read:user`, `copilot`, `manage_billing:copilot` |
+| Phase 3 — Scopes | Connections configured (Phase 2), `gh` CLI authenticated |
 
 ---
 
@@ -126,6 +175,10 @@ Build from source and deploy to Azure with ACR.
 | `azure/cleanup.ps1` | Delete Azure resources using state file |
 | `azure/main.bicep` | Bicep template for custom builds (with ACR) |
 | `azure/main-official.bicep` | Bicep template for official images (no ACR) |
+| `configure/configure-connections.ps1` | Phase 2: Create & test GitHub + Copilot connections |
+| `configure/configure-scopes.ps1` | Phase 3: Add repos, create project, trigger sync |
+| `configure/full-configuration.ps1` | Phases 2+3 combined in one flow |
+| `helpers/discover-devlake.ps1` | Auto-detect running DevLake instance URL |
 
 ## Reference Documentation
 
@@ -134,6 +187,7 @@ Build from source and deploy to Azure with ACR.
 | [environment-variables.md](references/environment-variables.md) | Required env vars & DB_URL format |
 | [troubleshooting.md](references/troubleshooting.md) | Common issues & fixes |
 | [cleanup.md](references/cleanup.md) | Teardown and resource deletion |
+| [api-reference.md](references/api-reference.md) | DevLake REST API endpoints & payloads |
 
 ---
 
@@ -150,14 +204,219 @@ See [references/environment-variables.md](references/environment-variables.md) f
 
 ---
 
-## State File (Azure)
+## Phase 2: Configure Connections
 
-Azure deployments create `.devlake-azure.json` in the current directory containing:
-- Resource names and IDs
-- Endpoints
-- Secrets (for reference)
+Create GitHub and GitHub Copilot connections against a running DevLake instance.
 
-Use for tracking deployments and cleanup. Add to `.gitignore`.
+### Agent Q&A Flow for Phase 2
+
+When the user asks to configure connections, follow this conversation flow:
+
+1. **Check prerequisites:**
+   - Verify DevLake is reachable: run `.\helpers\discover-devlake.ps1` or ask for the URL
+   - Verify `gh` CLI: run `gh auth status`
+   - If either fails, guide the user to fix it before continuing
+
+2. **Ask the user:**
+   - "What is your GitHub organization slug?" (e.g., `octodemo`)
+   - "Do you have a GitHub PAT, or should I use your `gh` CLI token?" — if using gh CLI, the script retrieves it automatically
+   - "Do you also want to configure GitHub Copilot metrics?" (default: yes)
+   - "Do you have an enterprise slug for enterprise-level Copilot metrics?" (optional)
+
+3. **Run the script** with the user's answers:
+
+```powershell
+# Both GitHub + Copilot (default)
+.\configure\configure-connections.ps1 -Organization "octodemo"
+
+# With explicit token
+.\configure\configure-connections.ps1 -Organization "octodemo" -GitHubToken "ghp_xxx"
+
+# GitHub only (no Copilot)
+.\configure\configure-connections.ps1 -Organization "octodemo" -ConnectionType "github"
+
+# With enterprise Copilot
+.\configure\configure-connections.ps1 -Organization "octodemo" -Enterprise "my-enterprise"
+
+# Against a specific DevLake URL
+.\configure\configure-connections.ps1 -Organization "octodemo" -DevLakeUrl "http://myhost:8080"
+```
+
+### What the Script Does
+
+1. Auto-discovers the DevLake API URL (state file → localhost fallback → ask user)
+2. Retrieves GitHub token from `gh` CLI (or uses provided token)
+3. Validates token scopes against GitHub API — warns about missing scopes
+4. Tests connection payload via `POST /plugins/github/test` before creating
+5. Creates GitHub connection via `POST /plugins/github/connections`
+6. Creates Copilot connection via `POST /plugins/gh-copilot/connections`
+7. Tests saved connections via `POST /plugins/<plugin>/connections/:id/test`
+8. Saves connection IDs to state file for Phase 3
+
+### Required PAT Scopes
+
+| Scope | Purpose | Required For |
+|-------|---------|-------------|
+| `repo` | Repository data access | GitHub connection |
+| `read:org` | Organization membership | Both |
+| `read:user` | User profile (GraphQL) | GitHub connection |
+| `copilot` | Copilot usage metrics | Copilot connection |
+| `manage_billing:copilot` | Copilot seats/billing | Copilot connection |
+
+### Idempotency
+
+The script checks for existing connections by name before creating. Running it twice is safe.
+
+---
+
+## Phase 3: Configure Scopes & Project
+
+Add repository scopes, create a DORA configuration, set up a project with a blueprint, and trigger the first data sync.
+
+### Agent Q&A Flow for Phase 3
+
+When the user asks to configure scopes or create a project, follow this flow:
+
+1. **Check prerequisites:**
+   - Verify DevLake is reachable
+   - Verify connections exist (Phase 2 completed)
+   - Verify `gh` CLI for repo lookups
+
+2. **Ask the user:**
+   - "Which repositories should I track for DORA metrics? You can:
+     - **Paste them** — comma-separated list of `owner/repo` names
+     - **Provide a file** — path to a `.csv` or `.txt` file with one `owner/repo` per line
+     - **Browse** — I'll list your org's repos via `gh` CLI and you can pick"
+   - "What regex identifies your deployment CI/CD workflows?" (default: `(?i)deploy`)
+   - "What regex identifies your production environment?" (default: `(?i)prod`)
+   - "What issue label marks incidents?" (default: `incident`)
+   - "What should the project be named?" (default: org name)
+   - "Should I trigger the first data sync now?" (default: yes)
+
+3. **Run the script:**
+
+```powershell
+# Basic: specify repos directly (paste or comma-separated)
+.\configure\configure-scopes.ps1 -Organization "octodemo" -Repos "octodemo/app1","octodemo/app2"
+
+# From a file (CSV or TXT, one owner/repo per line)
+.\configure\configure-scopes.ps1 -Organization "octodemo" -ReposFile ".\my-repos.csv"
+
+# Interactive: let user pick from org's repos
+.\configure\configure-scopes.ps1 -Organization "octodemo"
+
+# Custom DORA patterns
+.\configure\configure-scopes.ps1 -Organization "octodemo" -Repos "octodemo/app1" `
+    -DeploymentPattern "(?i)(deploy|release)" `
+    -ProductionPattern "(?i)(prod|production)" `
+    -IncidentLabel "bug/incident"
+
+# Custom project name
+.\configure\configure-scopes.ps1 -Organization "octodemo" -ProjectName "My DORA Dashboard"
+
+# Skip Copilot scope
+.\configure\configure-scopes.ps1 -Organization "octodemo" -Repos "octodemo/app1" -SkipCopilot
+
+# Skip triggering sync
+.\configure\configure-scopes.ps1 -Organization "octodemo" -Repos "octodemo/app1" -SkipSync
+```
+
+### What the Script Does
+
+1. Auto-discovers DevLake API URL and resolves connection IDs (from state file or API)
+2. Looks up repo details via `gh api repos/<owner>/<repo>` to get GitHub numeric IDs
+3. Creates a DORA scope config via `POST /plugins/github/connections/:id/scope-configs`
+4. Adds repo scopes via `PUT /plugins/github/connections/:id/scopes`
+5. Adds Copilot org scope via `PUT /plugins/gh-copilot/connections/:id/scopes`
+6. Creates a DevLake project via `POST /projects` (auto-creates blueprint)
+7. Configures the blueprint with connection scopes via `PATCH /blueprints/:id`
+8. Triggers the first sync via `POST /blueprints/:id/trigger`
+9. Monitors pipeline progress for up to 5 minutes
+
+### DORA Scope Config Explained
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `deploymentPattern` | `(?i)deploy` | Regex matching GitHub Actions workflow names that represent deployments |
+| `productionPattern` | `(?i)prod` | Regex matching environment names for production deploys |
+| `issueTypeIncident` | `incident` | Issue label that identifies incidents for Change Failure Rate and MTTR |
+
+Users should customize these to match their CI/CD naming conventions.
+
+---
+
+## Full Configuration (Phases 2 + 3)
+
+Run connections and scopes configuration in a single flow, ideal for users who already have DevLake deployed and running.
+
+```powershell
+# End-to-end with interactive repo selection
+.\configure\full-configuration.ps1 -Organization "octodemo"
+
+# End-to-end with repos specified
+.\configure\full-configuration.ps1 -Organization "octodemo" -Repos "octodemo/app1","octodemo/app2"
+
+# End-to-end with repos from a file
+.\configure\full-configuration.ps1 -Organization "octodemo" -ReposFile ".\my-repos.csv"
+
+# With all options
+.\configure\full-configuration.ps1 -Organization "octodemo" `
+    -Repos "octodemo/app1" `
+    -ProjectName "My DORA Project" `
+    -Enterprise "my-enterprise" `
+    -DeploymentPattern "(?i)(deploy|release)"
+```
+
+### Agent Flow for Full Configuration
+
+When a user says "configure DevLake" or chooses Full Configuration:
+
+1. Ask: "Do you have DevLake running? I'll auto-detect it, or you can provide the URL."
+2. Ask: "What's your GitHub organization?"
+3. Ask: "Do you have a token or should I use your `gh` CLI auth?"
+4. Ask: "Which repos should I track? You can paste a list, point me to a CSV/TXT file, or I can list your org's repos."
+5. Ask: "Do you want Copilot metrics too?" (default: yes)
+6. Run `.\configure\full-configuration.ps1` with their answers
+7. Report results: connections created, repos added, sync status, Grafana URL
+
+---
+
+## Full Setup (Phases 1 + 2 + 3)
+
+End-to-end: deploy a fresh DevLake instance and then configure it.
+
+### Agent Flow for Full Setup
+
+When a user says "set up DevLake from scratch" or chooses Full Setup:
+
+1. Run **Phase 1** first — ask the user which deployment path (local Docker or Azure, official or custom) and execute the appropriate deploy script
+2. Wait for DevLake to be healthy (poll `/ping`)
+3. Then run **Full Configuration** (Phases 2 + 3) as described above
+
+---
+
+## API URL Discovery
+
+The configuration scripts auto-detect the DevLake API URL in this order:
+
+1. **Explicit parameter** (`-DevLakeUrl "http://..."`)
+2. **Azure state file** (`.devlake-azure.json` → `endpoints.backend`)
+3. **Local state file** (`.devlake-local.json` → `endpoints.backend`)
+4. **Well-known ports** (`localhost:8080`, `localhost:8085`)
+5. **Ask the user** (if all above fail)
+
+The discovery helper is at `helpers/discover-devlake.ps1` and is called automatically by all configure scripts.
+
+---
+
+## State Files
+
+| File | Created By | Contains |
+|------|-----------|----------|
+| `.devlake-azure.json` | `azure/deploy.ps1` | Azure resources, endpoints, secrets |
+| `.devlake-local.json` | `configure/configure-connections.ps1` | Endpoints, connections (local deploys) |
+
+Both files are updated by Phase 2 and Phase 3 scripts with connection IDs, project info, and timestamps. Add to `.gitignore`.
 
 ---
 
