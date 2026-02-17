@@ -13,7 +13,12 @@
     DevLake API base URL. Auto-discovered if omitted.
 
 .PARAMETER GitHubToken
-    GitHub PAT. If omitted, retrieved from gh CLI.
+    GitHub PAT. If omitted, resolved from .devlake.env, environment variables,
+    or interactive prompt.
+
+.PARAMETER EnvFile
+    Path to the .devlake.env secrets file. Defaults to .devlake.env in the
+    current directory. Passed through to configure-connections.ps1.
 
 .PARAMETER Organization
     GitHub organization slug (required).
@@ -56,6 +61,7 @@
 param(
     [string]$DevLakeUrl,
     [string]$GitHubToken,
+    [string]$EnvFile,
     [Parameter(Mandatory = $true)]
     [string]$Organization,
     [string]$Enterprise,
@@ -105,6 +111,7 @@ $connectParams = @{
 }
 if ($DevLakeUrl)   { $connectParams.DevLakeUrl = $DevLakeUrl }
 if ($GitHubToken)  { $connectParams.GitHubToken = $GitHubToken }
+if ($EnvFile)      { $connectParams.EnvFile = $EnvFile }
 if ($Enterprise)   { $connectParams.Enterprise = $Enterprise }
 
 $connectResult = & $connectScript @connectParams

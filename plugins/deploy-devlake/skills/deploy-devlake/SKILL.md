@@ -53,7 +53,8 @@ Branch to the appropriate section based on their answer. If the user's original 
   PHASE 2 — Configure Connections
   ────────────────────────────────
   3️⃣  Create GitHub + Copilot connections
-      • Validates PAT scopes via gh CLI
+      • Reads PAT from .devlake.env file (secure, no chat exposure)
+      • Validates PAT scopes against GitHub API
       • Tests connections before saving
 
   PHASE 3 — Configure Scopes & Project
@@ -82,8 +83,8 @@ Branch to the appropriate section based on their answer. If the user's original 
 |-------|--------------|
 | Phase 1 — Local Docker | Docker installed and running |
 | Phase 1 — Azure | Azure CLI logged in (`az account show`), Docker, Active subscription |
-| Phase 2 — Connections | Running DevLake instance, `gh` CLI authenticated (`gh auth status`), GitHub PAT with scopes: `repo`, `read:org`, `read:user`, `copilot`, `manage_billing:copilot` |
-| Phase 3 — Scopes | Connections configured (Phase 2), `gh` CLI authenticated |
+| Phase 2 — Connections | Running DevLake instance, GitHub PAT with scopes: `repo`, `read:org`, `read:user`, `copilot`, `manage_billing:copilot` |
+| Phase 3 — Scopes | Connections configured (Phase 2), `gh` CLI authenticated (for repo lookups) |
 
 ---
 
@@ -179,6 +180,7 @@ Build from source and deploy to Azure with ACR.
 | `configure/configure-scopes.ps1` | Phase 3: Add repos, create project, trigger sync |
 | `configure/full-configuration.ps1` | Phases 2+3 combined in one flow |
 | `helpers/discover-devlake.ps1` | Auto-detect running DevLake instance URL |
+| `helpers/load-env.ps1` | Load secrets from `.devlake.env` file |
 
 ## Reference Documentation
 
@@ -210,27 +212,52 @@ Create GitHub and GitHub Copilot connections against a running DevLake instance.
 
 ### Agent Q&A Flow for Phase 2
 
+> ⚠️ **Security: NEVER accept a PAT pasted directly into this conversation.**
+> Chat history is persisted and tokens would be permanently exposed.
+> Always use the `.devlake.env` file workflow described below.
+
 When the user asks to configure connections, follow this conversation flow:
 
 1. **Check prerequisites:**
    - Verify DevLake is reachable: run `.\helpers\discover-devlake.ps1` or ask for the URL
-   - Verify `gh` CLI: run `gh auth status`
-   - If either fails, guide the user to fix it before continuing
 
 2. **Ask the user:**
    - "What is your GitHub organization slug?" (e.g., `octodemo`)
-   - "Do you have a GitHub PAT, or should I use your `gh` CLI token?" — if using gh CLI, the script retrieves it automatically
    - "Do you also want to configure GitHub Copilot metrics?" (default: yes)
    - "Do you have an enterprise slug for enterprise-level Copilot metrics?" (optional)
 
-3. **Run the script** with the user's answers:
+3. **Create the `.devlake.env` secrets file** with the appropriate template based on which connections the user wants. Use the agent's file creation capability to create the file in the working directory, then open it for the user:
+
+   For GitHub + Copilot (both connections use the same token):
+   ```env
+   # DevLake Connection Secrets
+   # Paste your GitHub PAT below, then save this file.
+   # Required scopes: repo, read:org, read:user, copilot, manage_billing:copilot
+   # This file will be deleted automatically after connections are created.
+
+   GITHUB_TOKEN=
+   ```
+
+   For GitHub only:
+   ```env
+   # DevLake Connection Secrets
+   # Paste your GitHub PAT below, then save this file.
+   # Required scopes: repo, read:org, read:user
+   # This file will be deleted automatically after connections are created.
+
+   GITHUB_TOKEN=
+   ```
+
+   Tell the user:
+   > "I've created a `.devlake.env` file. Please paste your GitHub PAT after `GITHUB_TOKEN=`, save the file, and let me know when you're ready."
+
+4. **Wait for user confirmation** that they've saved the file.
+
+5. **Run the script** — the token is read from the file, never from the command line:
 
 ```powershell
 # Both GitHub + Copilot (default)
 .\configure\configure-connections.ps1 -Organization "octodemo"
-
-# With explicit token
-.\configure\configure-connections.ps1 -Organization "octodemo" -GitHubToken "ghp_xxx"
 
 # GitHub only (no Copilot)
 .\configure\configure-connections.ps1 -Organization "octodemo" -ConnectionType "github"
@@ -242,16 +269,20 @@ When the user asks to configure connections, follow this conversation flow:
 .\configure\configure-connections.ps1 -Organization "octodemo" -DevLakeUrl "http://myhost:8080"
 ```
 
+6. **Confirm cleanup** — after successful connection creation, the script automatically deletes `.devlake.env`. Report this to the user:
+   > "Connections created successfully. The `.devlake.env` file has been deleted — your PAT is now stored encrypted in DevLake's database."
+
 ### What the Script Does
 
 1. Auto-discovers the DevLake API URL (state file → localhost fallback → ask user)
-2. Retrieves GitHub token from `gh` CLI (or uses provided token)
+2. Resolves GitHub token (`.devlake.env` → `$env:GITHUB_TOKEN` → masked prompt)
 3. Validates token scopes against GitHub API — warns about missing scopes
 4. Tests connection payload via `POST /plugins/github/test` before creating
 5. Creates GitHub connection via `POST /plugins/github/connections`
 6. Creates Copilot connection via `POST /plugins/gh-copilot/connections`
 7. Tests saved connections via `POST /plugins/<plugin>/connections/:id/test`
 8. Saves connection IDs to state file for Phase 3
+9. Deletes `.devlake.env` (tokens now stored encrypted in DevLake)
 
 ### Required PAT Scopes
 
@@ -359,6 +390,9 @@ Run connections and scopes configuration in a single flow, ideal for users who a
 # End-to-end with repos from a file
 .\configure\full-configuration.ps1 -Organization "octodemo" -ReposFile ".\my-repos.csv"
 
+# With custom .devlake.env location
+.\configure\full-configuration.ps1 -Organization "octodemo" -EnvFile "C:\secrets\.devlake.env"
+
 # With all options
 .\configure\full-configuration.ps1 -Organization "octodemo" `
     -Repos "octodemo/app1" `
@@ -373,11 +407,12 @@ When a user says "configure DevLake" or chooses Full Configuration:
 
 1. Ask: "Do you have DevLake running? I'll auto-detect it, or you can provide the URL."
 2. Ask: "What's your GitHub organization?"
-3. Ask: "Do you have a token or should I use your `gh` CLI auth?"
-4. Ask: "Which repos should I track? You can paste a list, point me to a CSV/TXT file, or I can list your org's repos."
-5. Ask: "Do you want Copilot metrics too?" (default: yes)
-6. Run `.\configure\full-configuration.ps1` with their answers
-7. Report results: connections created, repos added, sync status, Grafana URL
+3. Create `.devlake.env` with `GITHUB_TOKEN=` placeholder, open it, and tell the user to paste their PAT and save.
+4. Wait for user confirmation that the file is saved.
+5. Ask: "Which repos should I track? You can paste a list, point me to a CSV/TXT file, or I can list your org's repos."
+6. Ask: "Do you want Copilot metrics too?" (default: yes)
+7. Run `.\configure\full-configuration.ps1` with their answers
+8. Report results: connections created, `.devlake.env` deleted, repos added, sync status, Grafana URL
 
 ---
 
@@ -415,8 +450,9 @@ The discovery helper is at `helpers/discover-devlake.ps1` and is called automati
 |------|-----------|----------|
 | `.devlake-azure.json` | `azure/deploy.ps1` | Azure resources, endpoints, secrets |
 | `.devlake-local.json` | `configure/configure-connections.ps1` | Endpoints, connections (local deploys) |
+| `.devlake.env` | Agent (Phase 2) | **Ephemeral** — PATs for connection creation. Auto-deleted after success. |
 
-Both files are updated by Phase 2 and Phase 3 scripts with connection IDs, project info, and timestamps. Add to `.gitignore`.
+Both state files are updated by Phase 2 and Phase 3 scripts with connection IDs, project info, and timestamps. Add all to `.gitignore`.
 
 ---
 

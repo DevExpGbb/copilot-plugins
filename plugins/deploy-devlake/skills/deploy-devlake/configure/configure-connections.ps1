@@ -4,11 +4,17 @@
 
 .DESCRIPTION
     Creates and tests GitHub and/or GitHub Copilot connections against a running
-    DevLake instance. Uses the gh CLI for token retrieval and validation.
+    DevLake instance.
+
+    Token resolution order:
+      1. -GitHubToken parameter (for CI/CD pipelines)
+      2. .devlake.env file (GITHUB_TOKEN key)
+      3. $env:GITHUB_TOKEN or $env:GH_TOKEN environment variables
+      4. Interactive masked prompt (Read-Host -MaskInput)
 
     Prerequisites:
-      - gh CLI installed and authenticated (gh auth status)
       - DevLake instance running and reachable
+      - GitHub PAT with required scopes (see SKILL.md for details)
 
 .PARAMETER DevLakeUrl
     DevLake API base URL. Auto-discovered if omitted.
@@ -17,7 +23,9 @@
     Which connections to create: "github", "gh-copilot", or "both" (default).
 
 .PARAMETER GitHubToken
-    GitHub PAT to use. If omitted, attempts to retrieve from gh CLI.
+    GitHub PAT to use. If omitted, resolved from .devlake.env, environment
+    variables, or interactive prompt. Prefer .devlake.env over this parameter
+    to avoid exposing the token in shell history.
 
 .PARAMETER Organization
     GitHub organization slug (e.g., "octodemo"). Required for gh-copilot.
@@ -28,17 +36,30 @@
 .PARAMETER ConnectionName
     Display name for the connection(s). Defaults to the organization name.
 
+.PARAMETER EnvFile
+    Path to the .devlake.env secrets file. Defaults to .devlake.env in the
+    current directory. The file is deleted after successful connection creation.
+
 .PARAMETER SkipTest
     Skip connection testing after creation.
 
-.PARAMETER RateLimitPerHour
-    GitHub API rate limit per hour. Default: 12000 for GitHub, 5000 for Copilot.
+.PARAMETER SkipCleanup
+    Do not delete the .devlake.env file after successful connection creation.
+
+.PARAMETER GitHubRateLimit
+    GitHub API rate limit per hour. Default: 12000.
+
+.PARAMETER CopilotRateLimit
+    Copilot API rate limit per hour. Default: 5000.
 
 .EXAMPLE
+    # Token in .devlake.env (recommended for interactive use)
     .\configure-connections.ps1 -Organization "octodemo"
 
 .EXAMPLE
-    .\configure-connections.ps1 -Organization "octodemo" -GitHubToken "ghp_xxx" -ConnectionType "both"
+    # Token via environment variable (CI/CD)
+    $env:GITHUB_TOKEN = "ghp_xxx"
+    .\configure-connections.ps1 -Organization "octodemo"
 
 .EXAMPLE
     .\configure-connections.ps1 -DevLakeUrl "http://myhost:8080" -Organization "myorg" -ConnectionType "github"
@@ -53,7 +74,9 @@ param(
     [string]$Organization,
     [string]$Enterprise,
     [string]$ConnectionName,
+    [string]$EnvFile,
     [switch]$SkipTest,
+    [switch]$SkipCleanup,
     [int]$GitHubRateLimit = 12000,
     [int]$CopilotRateLimit = 5000
 )
@@ -80,30 +103,58 @@ Write-Host "  API: $apiBase" -ForegroundColor Green
 
 # ═══════════════════════════════════════════════════════════════
 #  Step 2: Resolve GitHub Token
+#  Priority: -GitHubToken param → .devlake.env → $env:GITHUB_TOKEN → masked prompt
 # ═══════════════════════════════════════════════════════════════
 Write-Host "`nStep 2: Resolving GitHub token..." -ForegroundColor Yellow
 
+# Track whether we loaded from the env file (for cleanup later)
+$loadedFromEnvFile = $false
+$resolvedEnvFile = if ($EnvFile) { $EnvFile } else { Join-Path (Get-Location) ".devlake.env" }
+
 if (-not $GitHubToken) {
-    # Try gh CLI
-    Write-Host "  No token provided. Checking gh CLI..." -ForegroundColor Gray
-    try {
-        $null = gh auth status 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $GitHubToken = (gh auth token 2>$null).Trim()
-            if ($GitHubToken) {
-                Write-Host "  Retrieved token from gh CLI." -ForegroundColor Green
-            }
+    # ── 2a. Try .devlake.env file ──────────────────────────────────
+    $loadEnvScript = Join-Path $helpersDir "load-env.ps1"
+    $envSecrets = & $loadEnvScript -EnvFile $resolvedEnvFile
+    if ($envSecrets["GITHUB_TOKEN"]) {
+        $GitHubToken = $envSecrets["GITHUB_TOKEN"]
+        $loadedFromEnvFile = $true
+        Write-Host "  Loaded token from .devlake.env" -ForegroundColor Green
+    }
+}
+
+if (-not $GitHubToken) {
+    # ── 2b. Try environment variables ──────────────────────────────
+    if ($env:GITHUB_TOKEN) {
+        $GitHubToken = $env:GITHUB_TOKEN
+        Write-Host "  Loaded token from `$env:GITHUB_TOKEN" -ForegroundColor Green
+    }
+    elseif ($env:GH_TOKEN) {
+        $GitHubToken = $env:GH_TOKEN
+        Write-Host "  Loaded token from `$env:GH_TOKEN" -ForegroundColor Green
+    }
+}
+
+if (-not $GitHubToken) {
+    # ── 2c. Interactive masked prompt ──────────────────────────────
+    Write-Host "  No token found in .devlake.env or environment variables." -ForegroundColor Yellow
+    Write-Host "  Required scopes: repo, read:org, read:user, copilot, manage_billing:copilot" -ForegroundColor Gray
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        $GitHubToken = Read-Host -MaskInput "  Enter your GitHub Personal Access Token"
+    }
+    else {
+        # PowerShell 5.1 fallback: use SecureString and convert
+        $secure = Read-Host "  Enter your GitHub Personal Access Token" -AsSecureString
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try {
+            $GitHubToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+        }
+        finally {
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
         }
     }
-    catch { }
-
     if (-not $GitHubToken) {
-        Write-Host "  gh CLI not authenticated or unavailable." -ForegroundColor Yellow
-        $GitHubToken = Read-Host "  Enter your GitHub Personal Access Token"
-        if (-not $GitHubToken) {
-            Write-Error "A GitHub token is required. Provide -GitHubToken or authenticate with 'gh auth login'."
-            exit 1
-        }
+        Write-Error "A GitHub token is required. Provide it via .devlake.env, `$env:GITHUB_TOKEN, or -GitHubToken parameter."
+        exit 1
     }
 }
 
@@ -376,6 +427,19 @@ $state | Add-Member -NotePropertyName "connectionsConfiguredAt" -NotePropertyVal
 $state | ConvertTo-Json -Depth 5 | Set-Content $stateFile -Encoding UTF8
 
 Write-Host "  State saved to: $stateFile" -ForegroundColor Green
+
+# ═══════════════════════════════════════════════════════════════
+#  Step 7: Clean up .devlake.env (auto-delete secrets file)
+# ═══════════════════════════════════════════════════════════════
+if ($loadedFromEnvFile -and -not $SkipCleanup -and (Test-Path $resolvedEnvFile)) {
+    try {
+        Remove-Item $resolvedEnvFile -Force
+        Write-Host "`n  Deleted $resolvedEnvFile (tokens now stored encrypted in DevLake)." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "`n  WARNING: Could not delete $resolvedEnvFile. Please delete it manually." -ForegroundColor Yellow
+    }
+}
 
 # ═══════════════════════════════════════════════════════════════
 #  Summary

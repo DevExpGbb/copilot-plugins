@@ -1,0 +1,14 @@
+# DevLake secrets & state
+.devlake.env
+.devlake-*.json
+*.env
+!env.example
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
+*.swo
