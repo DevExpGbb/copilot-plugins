@@ -1,0 +1,22 @@
+{
+  "name": "deploy-devlake",
+  "version": "1.0.0",
+  "description": "Deploy and configure Apache DevLake to Azure or local Docker, with automated GitHub/Copilot connection setup, DORA metrics scoping, and first data sync.",
+  "author": {
+    "name": "DevExpGBB",
+    "url": "https://github.com/DevExpGBB"
+  },
+  "homepage": "https://github.com/DevExpGBB/copilot-plugins/tree/main/plugins/deploy-devlake",
+  "repository": "https://github.com/DevExpGBB/copilot-plugins",
+  "license": "MIT",
+  "keywords": [
+    "devlake",
+    "dora",
+    "deployment",
+    "azure",
+    "docker",
+    "copilot-metrics",
+    "github",
+    "devops"
+  ]
+}
