@@ -160,7 +160,7 @@ Build from source and deploy to Azure with ACR.
 
 ### From Remote Fork
 ```powershell
-.\azure\deploy.ps1 -ResourceGroupName "devlake-rg" -Location "eastus" -RepoUrl "https://github.com/ewega/incubator-devlake"
+.\azure\deploy.ps1 -ResourceGroupName "devlake-rg" -Location "eastus" -RepoUrl "https://github.com/DevExpGBB/incubator-devlake"
 ```
 
 **Cost:** ~$50-75/month (includes ACR)
